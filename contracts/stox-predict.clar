@@ -96,3 +96,77 @@
     (ok market-id)
   )
 )
+
+;; Make Prediction
+;; Allows users to stake STX on their Bitcoin price prediction
+(define-public (make-prediction
+    (market-id uint)
+    (prediction (string-ascii 4))
+    (stake uint)
+  )
+  (let (
+      (market (unwrap! (map-get? markets market-id) ERR-NOT-FOUND))
+      (current-block stacks-block-height)
+    )
+    ;; Validate market timing
+    (asserts!
+      (and
+        (>= current-block (get start-block market))
+        (< current-block (get end-block market))
+      )
+      ERR-MARKET-CLOSED
+    )
+    ;; Validate prediction parameters
+    (asserts! (or (is-eq prediction "up") (is-eq prediction "down"))
+      ERR-INVALID-PREDICTION
+    )
+    (asserts! (>= stake (var-get minimum-stake)) ERR-INVALID-PREDICTION)
+    (asserts! (<= stake (stx-get-balance tx-sender)) ERR-INSUFFICIENT-BALANCE)
+    ;; Transfer stake to contract
+    (try! (stx-transfer? stake tx-sender (as-contract tx-sender)))
+    ;; Record user prediction
+    (map-set user-predictions {
+      market-id: market-id,
+      user: tx-sender,
+    } {
+      prediction: prediction,
+      stake: stake,
+      claimed: false,
+    })
+    ;; Update market totals
+    (map-set markets market-id
+      (merge market {
+        total-up-stake: (if (is-eq prediction "up")
+          (+ (get total-up-stake market) stake)
+          (get total-up-stake market)
+        ),
+        total-down-stake: (if (is-eq prediction "down")
+          (+ (get total-down-stake market) stake)
+          (get total-down-stake market)
+        ),
+      })
+    )
+    (ok true)
+  )
+)
+
+;; Resolve Market
+;; Oracle resolves market with final Bitcoin price
+(define-public (resolve-market
+    (market-id uint)
+    (end-price uint)
+  )
+  (let ((market (unwrap! (map-get? markets market-id) ERR-NOT-FOUND)))
+    (asserts! (is-eq tx-sender (var-get oracle-address)) ERR-OWNER-ONLY)
+    (asserts! (>= stacks-block-height (get end-block market)) ERR-MARKET-CLOSED)
+    (asserts! (not (get resolved market)) ERR-MARKET-CLOSED)
+    (asserts! (> end-price u0) ERR-INVALID-PARAMETER)
+    (map-set markets market-id
+      (merge market {
+        end-price: end-price,
+        resolved: true,
+      })
+    )
+    (ok true)
+  )
+)
