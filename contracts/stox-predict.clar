@@ -269,3 +269,26 @@
     (ok (var-set minimum-stake new-minimum))
   )
 )
+
+;; Update Platform Fee
+;; Allows contract owner to adjust platform fee percentage
+(define-public (set-fee-percentage (new-fee uint))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-OWNER-ONLY)
+    (asserts! (<= new-fee u100) ERR-INVALID-PARAMETER)
+    (ok (var-set fee-percentage new-fee))
+  )
+)
+
+;; Withdraw Platform Fees
+;; Allows contract owner to withdraw accumulated fees
+(define-public (withdraw-fees (amount uint))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-OWNER-ONLY)
+    (asserts! (<= amount (stx-get-balance (as-contract tx-sender)))
+      ERR-INSUFFICIENT-BALANCE
+    )
+    (try! (as-contract (stx-transfer? amount (as-contract tx-sender) CONTRACT-OWNER)))
+    (ok amount)
+  )
+)
