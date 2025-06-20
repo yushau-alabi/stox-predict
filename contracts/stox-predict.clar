@@ -170,3 +170,102 @@
     (ok true)
   )
 )
+
+;; Claim Winnings
+;; Winners can claim their proportional share of the total stake pool
+(define-public (claim-winnings (market-id uint))
+  (let (
+      (market (unwrap! (map-get? markets market-id) ERR-NOT-FOUND))
+      (prediction (unwrap!
+        (map-get? user-predictions {
+          market-id: market-id,
+          user: tx-sender,
+        })
+        ERR-NOT-FOUND
+      ))
+    )
+    (asserts! (get resolved market) ERR-MARKET-CLOSED)
+    (asserts! (not (get claimed prediction)) ERR-ALREADY-CLAIMED)
+    (let (
+        (winning-prediction (if (> (get end-price market) (get start-price market))
+          "up"
+          "down"
+        ))
+        (total-stake (+ (get total-up-stake market) (get total-down-stake market)))
+        (winning-stake (if (is-eq winning-prediction "up")
+          (get total-up-stake market)
+          (get total-down-stake market)
+        ))
+      )
+      (asserts! (is-eq (get prediction prediction) winning-prediction)
+        ERR-INVALID-PREDICTION
+      )
+      (let (
+          (winnings (/ (* (get stake prediction) total-stake) winning-stake))
+          (fee (/ (* winnings (var-get fee-percentage)) u100))
+          (payout (- winnings fee))
+        )
+        ;; Transfer winnings to user
+        (try! (as-contract (stx-transfer? payout (as-contract tx-sender) tx-sender)))
+        ;; Transfer fee to contract owner
+        (try! (as-contract (stx-transfer? fee (as-contract tx-sender) CONTRACT-OWNER)))
+        ;; Mark as claimed
+        (map-set user-predictions {
+          market-id: market-id,
+          user: tx-sender,
+        }
+          (merge prediction { claimed: true })
+        )
+        (ok payout)
+      )
+    )
+  )
+)
+
+;; READ-ONLY FUNCTIONS
+
+;; Get Market Details
+;; Returns complete market information for given market ID
+(define-read-only (get-market (market-id uint))
+  (map-get? markets market-id)
+)
+
+;; Get User Prediction
+;; Returns user's prediction details for a specific market
+(define-read-only (get-user-prediction
+    (market-id uint)
+    (user principal)
+  )
+  (map-get? user-predictions {
+    market-id: market-id,
+    user: user,
+  })
+)
+
+;; Get Contract Balance
+;; Returns total STX balance held by the contract
+(define-read-only (get-contract-balance)
+  (stx-get-balance (as-contract tx-sender))
+)
+
+;; ADMINISTRATIVE FUNCTIONS
+
+;; Update Oracle Address
+;; Allows contract owner to change the oracle address
+(define-public (set-oracle-address (new-address principal))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-OWNER-ONLY)
+    (asserts! (is-eq new-address new-address) ERR-INVALID-PARAMETER)
+    (ok (var-set oracle-address new-address))
+  )
+)
+
+;; Update Minimum Stake
+;; Allows contract owner to adjust minimum stake requirement
+(define-public (set-minimum-stake (new-minimum uint))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-OWNER-ONLY)
+    (asserts! (> new-minimum u0) ERR-INVALID-PARAMETER)
+    (ok (var-set minimum-stake new-minimum))
+  )
+)
